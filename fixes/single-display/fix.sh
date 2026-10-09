@@ -1,8 +1,9 @@
-# Sourced by install.sh, which provides FIX_DIR and the info/ok/warn and
-# put_lua_block/remove_lua_block/in_hyprland helpers.
+# Sourced by bin/omadeck, which provides FIX_DIR and the info/ok/warn,
+# put_lua_block/remove_lua_block/has_lua_block and in_hyprland helpers.
 
 FIX_NAME="Single display"
-FIX_DESCRIPTION="External display connected: Deck screen turns off. Unplugged: Deck screen turns back on."
+FIX_CATEGORY="Hardware"
+FIX_DESCRIPTION="Turn the Deck screen off while an external display is connected, and back on when it's unplugged."
 
 BIN="$HOME/.local/bin/omadeck-display-switch"
 AUTOSTART="$HOME/.config/hypr/autostart.lua"
@@ -13,6 +14,10 @@ stop_switcher() {
     pgrep -f "$BIN" >/dev/null || return 0
     sleep 0.1
   done
+}
+
+fix_status() {
+  [[ -x $BIN ]] && has_lua_block "$AUTOSTART" single-display
 }
 
 fix_install() {
@@ -44,8 +49,8 @@ fix_uninstall() {
   remove_lua_block "$AUTOSTART" single-display
   rm -f "$BIN"
   # Bring the Deck screen back if the switcher had turned it off.
-  if in_hyprland; then
+  if in_hyprland && hyprctl monitors all -j | jq -e 'any(.[]; .name == "eDP-1" and .disabled)' >/dev/null; then
     hyprctl reload >/dev/null
   fi
-  ok "Removed; the Deck screen is back to Hyprland's defaults"
+  ok "Off; the Deck screen follows Hyprland's normal rules again"
 }

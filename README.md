@@ -16,11 +16,31 @@ Open a terminal on your Deck (in Omarchy's desktop session) and paste:
 curl -fsSL https://raw.githubusercontent.com/gladimdim/OmaDeck/main/install.sh | bash
 ```
 
-You don't need to log out: fixes take effect right away. Run the same command again any time to update OmaDeck and pick up new fixes. Running it more than once is safe.
+You don't need to log out: fixes take effect right away. Run the same command again any time to update OmaDeck and pick up new fixes. Running it more than once is safe, and fixes you switched off stay off.
 
-## Fixes
+## Control panel
 
-### 🖥️ Single display
+OmaDeck adds a gamepad icon to your Omarchy bar. Click it to see every tweak, grouped by category, and switch each one on or off.
+
+<p align="center">
+  <img src="assets/panel.png" alt="The OmaDeck panel in the Omarchy bar, showing the Single display tweak switched on" width="420">
+</p>
+
+It follows your Omarchy theme and works from the keyboard: arrow keys move between tweaks, Enter flips one, Esc closes.
+
+The same controls work from a terminal:
+
+```text
+omadeck list               Show every tweak and whether it's on
+omadeck enable <tweak>     Turn a tweak on
+omadeck disable <tweak>    Turn a tweak off (stays off when OmaDeck updates)
+```
+
+## Tweaks
+
+### Hardware
+
+#### 🖥️ Single display
 
 Works like Windows' *"Show only on 2"*: you use one screen at a time.
 
@@ -36,19 +56,19 @@ A small listener (`~/.local/bin/omadeck-display-switch`) watches Hyprland's moni
 ## Uninstall
 
 ```bash
-~/.local/share/omadeck/install.sh --uninstall
+omadeck uninstall
 ```
 
-This removes every fix, removes OmaDeck's lines from your config, and turns the Deck screen back on. To remove the downloaded copy too, delete `~/.local/share/omadeck`.
+This turns every tweak off, removes OmaDeck's lines from your config and the bar plugin, and turns the Deck screen back on. To remove the downloaded copy too, delete `~/.local/share/omadeck`.
 
-## Options
+## Installer options
 
 ```text
 install.sh [--uninstall] [--force] [--list]
 
-  --uninstall  Remove every OmaDeck fix and restore the defaults
-  --force      Run on hardware that is not a Steam Deck
-  --list       Show the available fixes and exit
+  --uninstall  Turn every tweak off and remove OmaDeck
+  --force      Install on hardware that is not a Steam Deck
+  --list       Show the available tweaks and exit
 ```
 
 ## Requirements
@@ -64,35 +84,44 @@ OmaDeck only touches your user account. It never edits `/usr/share/omarchy`, so 
 | Path | Purpose |
 | --- | --- |
 | `~/.local/share/omadeck/` | The downloaded copy of this repo |
-| `~/.local/bin/omadeck-*` | Helper scripts installed by fixes |
-| `~/.config/hypr/*.lua` | Small blocks between `-- >>> omadeck: <fix> >>>` markers |
+| `~/.local/bin/omadeck` | The `omadeck` command (a link into the copy above) |
+| `~/.local/bin/omadeck-*` | Helper scripts installed by tweaks |
+| `~/.config/omarchy/plugins/gladimdim.omadeck/` | The bar plugin |
+| `~/.config/omadeck/disabled` | Tweaks you switched off |
+| `~/.config/hypr/*.lua` | Small blocks between `-- >>> omadeck: <tweak> >>>` markers |
 
 Re-running the installer replaces those marked blocks instead of adding copies, and uninstalling removes them.
 
-## Adding a fix
+## Adding a tweak
 
-Each fix is a folder in `fixes/` with a `fix.sh` that `install.sh` sources:
+Each tweak is a folder in `fixes/` with a `fix.sh` that the `omadeck` command sources. The folder name is the tweak's id:
 
 ```bash
-FIX_NAME="My fix"
-FIX_DESCRIPTION="One line about what it does."
+FIX_NAME="My tweak"
+FIX_CATEGORY="Hardware"   # the panel groups tweaks by this
+FIX_DESCRIPTION="One sentence about what it does."
+
+# Exit 0 when the tweak is on. The panel's toggle shows this.
+fix_status() {
+  has_lua_block "$HOME/.config/hypr/looknfeel.lua" my-tweak
+}
 
 fix_install() {
   # Idempotent: running it twice must give the same result as running it once.
-  put_lua_block "$HOME/.config/hypr/looknfeel.lua" my-fix 'hl.config({ ... })'
+  put_lua_block "$HOME/.config/hypr/looknfeel.lua" my-tweak 'hl.config({ ... })'
   ok "Done"
 }
 
 fix_uninstall() {
-  remove_lua_block "$HOME/.config/hypr/looknfeel.lua" my-fix
+  remove_lua_block "$HOME/.config/hypr/looknfeel.lua" my-tweak
 }
 ```
 
-Fixes run in alphabetical order, each in its own subshell with `set -e`. Inside `fix.sh` you can use:
+A new category shows up in the panel as soon as a tweak uses it. Tweaks run in alphabetical order, each in its own subshell with `set -e`. Inside `fix.sh` you can use:
 
-- `$FIX_DIR`: the fix's folder
+- `$FIX_DIR`: the tweak's folder
 - `info`, `ok`, `warn`: output helpers
-- `put_lua_block`, `remove_lua_block`: add or remove a marked config block
+- `put_lua_block`, `remove_lua_block`, `has_lua_block`: add, remove or check a marked config block
 - `in_hyprland`: true when a Hyprland session is running
 
-To test your changes, run `./install.sh` from your clone. It uses the clone directly and doesn't download anything.
+To test your changes, run `./install.sh` from your clone. It uses the clone directly, doesn't download anything, and points the `omadeck` command at your clone. The bar plugin's source is in `plugin/`, and setup copies it into place.

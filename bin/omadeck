@@ -1,0 +1,300 @@
+#!/bin/bash
+# omadeck: turn OmaDeck fixes on and off, and install or remove OmaDeck itself.
+# The installer and the Omarchy bar plugin both drive this command.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+STATE_DIR="$HOME/.config/omadeck"
+DISABLED_FILE="$STATE_DIR/disabled"
+CLI_LINK="$HOME/.local/bin/omadeck"
+PLUGIN_ID="gladimdim.omadeck"
+PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+
+# ---------------------------------------------------------------------------
+# Output helpers (also available to every fix)
+# ---------------------------------------------------------------------------
+
+if [[ -t 1 ]]; then
+  BOLD=$'\e[1m' DIM=$'\e[2m' RED=$'\e[31m' GREEN=$'\e[32m' YELLOW=$'\e[33m' BLUE=$'\e[34m' RESET=$'\e[0m'
+else
+  BOLD="" DIM="" RED="" GREEN="" YELLOW="" BLUE="" RESET=""
+fi
+
+info() { echo "${BLUE}::${RESET} $*"; }
+ok() { echo "${GREEN}✓${RESET} $*"; }
+warn() { echo "${YELLOW}!${RESET} $*" >&2; }
+die() {
+  echo "${RED}✗${RESET} $*" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Config helpers (available to every fix)
+# ---------------------------------------------------------------------------
+
+# Remove the block that put_lua_block wrote for <id>, if any.
+remove_lua_block() {
+  local file=$1 id=$2
+  [[ -f $file ]] || return 0
+  sed -i "/^-- >>> omadeck: $id >>>\$/,/^-- <<< omadeck: $id <<<\$/d" "$file"
+  # Drop the trailing blank lines the block leaves behind.
+  sed -i -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' "$file"
+}
+
+# Append <content> to a Lua config file between OmaDeck markers, replacing an
+# earlier copy of the same block so re-running stays idempotent.
+put_lua_block() {
+  local file=$1 id=$2 content=$3
+  remove_lua_block "$file" "$id"
+  printf '\n-- >>> omadeck: %s >>>\n%s\n-- <<< omadeck: %s <<<\n' "$id" "$content" "$id" >>"$file"
+}
+
+has_lua_block() {
+  [[ -f $1 ]] && grep -qx -- "-- >>> omadeck: $2 >>>" "$1"
+}
+
+# True when this shell can talk to a running Hyprland session.
+in_hyprland() {
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && hyprctl version >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# Fixes
+# ---------------------------------------------------------------------------
+
+fix_ids() {
+  local fix
+  for fix in "$ROOT"/fixes/*/fix.sh; do
+    [[ -f $fix ]] && basename "$(dirname "$fix")"
+  done
+}
+
+require_fix() {
+  [[ -n ${1:-} && -f $ROOT/fixes/$1/fix.sh ]] || die "Unknown fix '${1:-}'. Run 'omadeck list' to see them."
+}
+
+is_user_disabled() {
+  [[ -f $DISABLED_FILE ]] && grep -qx -- "$1" "$DISABLED_FILE"
+}
+
+remember_disabled() {
+  mkdir -p "$STATE_DIR"
+  is_user_disabled "$1" || echo "$1" >>"$DISABLED_FILE"
+}
+
+forget_disabled() {
+  [[ -f $DISABLED_FILE ]] || return 0
+  sed -i "/^$1\$/d" "$DISABLED_FILE"
+}
+
+# Run one hook of a fix in a subshell with set -e, so a fix stops at its first
+# error and cannot leak state into the next one. Not `if ! ( ... )`: bash
+# ignores set -e inside a condition.
+run_fix() {
+  local id=$1 hook=$2 quiet=${3:-} status
+  set +e
+  (
+    set -e
+    FIX_DIR="$ROOT/fixes/$id"
+    # shellcheck source=/dev/null
+    source "$FIX_DIR/fix.sh"
+    [[ -n $quiet ]] || echo "${BOLD}$FIX_NAME${RESET} ${DIM}($id)${RESET}"
+    "$hook"
+  ) </dev/null
+  status=$?
+  set -e
+  return $status
+}
+
+fix_json() {
+  local id=$1
+  (
+    FIX_DIR="$ROOT/fixes/$id"
+    # shellcheck source=/dev/null
+    source "$FIX_DIR/fix.sh"
+    enabled=false
+    if fix_status >/dev/null 2>&1; then enabled=true; fi
+    jq -cn --arg id "$id" --arg name "$FIX_NAME" --arg description "$FIX_DESCRIPTION" \
+      --arg category "${FIX_CATEGORY:-Other}" --argjson enabled "$enabled" \
+      '{id: $id, name: $name, description: $description, category: $category, enabled: $enabled}'
+  ) </dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_list() {
+  local id json
+  if [[ ${1:-} == --json ]]; then
+    for id in $(fix_ids); do fix_json "$id"; done | jq -s '.'
+    return
+  fi
+  for id in $(fix_ids); do
+    json=$(fix_json "$id")
+    if [[ $(jq -r .enabled <<<"$json") == true ]]; then
+      printf '%s %-16s %s\n' "${GREEN}on ${RESET}" "$id" "$(jq -r '.category + " · " + .name' <<<"$json")"
+    else
+      printf '%s %-16s %s\n' "${DIM}off${RESET}" "$id" "$(jq -r '.category + " · " + .name' <<<"$json")"
+    fi
+  done
+}
+
+cmd_enable() {
+  require_fix "${1:-}"
+  forget_disabled "$1"
+  run_fix "$1" fix_install
+}
+
+cmd_disable() {
+  require_fix "${1:-}"
+  remember_disabled "$1"
+  run_fix "$1" fix_uninstall
+}
+
+is_steam_deck() {
+  local vendor product
+  vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
+  product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+  # Jupiter is the LCD model, Galileo the OLED.
+  [[ $vendor == "Valve" && $product =~ ^(Jupiter|Galileo)$ ]]
+}
+
+# Print the shell's plugin list, waiting out the second or two the shell spends
+# hot-reloading plugins (when it does not answer IPC) after files change.
+shell_plugins() {
+  local _
+  for _ in {1..30}; do
+    omarchy plugin list --json 2>/dev/null && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+install_plugin() {
+  local plugins
+  mkdir -p "$(dirname "$PLUGIN_DIR")"
+  rm -rf "$PLUGIN_DIR"
+  cp -r "$ROOT/plugin" "$PLUGIN_DIR"
+
+  if ! command -v omarchy-shell >/dev/null || ! in_hyprland; then
+    info "Bar plugin copied; enable it later with: omarchy plugin enable $PLUGIN_ID"
+    return
+  fi
+
+  # Copying the files makes the shell reload its plugins; let that settle.
+  sleep 1
+  if ! plugins=$(shell_plugins) || ! jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id)' <<<"$plugins" >/dev/null; then
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+    plugins=$(shell_plugins) || plugins="[]"
+  fi
+  # Enable only the first time, so a re-run never moves a widget the user placed.
+  if jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled)' <<<"$plugins" >/dev/null; then
+    ok "Bar plugin updated"
+  elif shell_plugins >/dev/null && omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+    ok "Bar plugin installed (gamepad icon in the bar)"
+  else
+    warn "Bar plugin copied, but the Omarchy shell didn't answer. Turn it on with: omarchy plugin enable $PLUGIN_ID"
+  fi
+}
+
+remove_plugin() {
+  [[ -d $PLUGIN_DIR ]] || return 0
+  if command -v omarchy >/dev/null && in_hyprland; then
+    omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$PLUGIN_DIR"
+  if command -v omarchy-shell >/dev/null && in_hyprland; then
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+  fi
+  ok "Bar plugin removed"
+}
+
+cmd_setup() {
+  local force=0 id failed=0
+  [[ ${1:-} == --force ]] && force=1
+
+  ((EUID != 0)) || die "Run OmaDeck as your normal user, not root (it configures your own desktop)"
+  if ! is_steam_deck; then
+    ((force)) || die "This does not look like a Steam Deck. Re-run with --force to install anyway."
+    warn "Not a Steam Deck; installing anyway because of --force"
+  fi
+  [[ -f $HOME/.config/hypr/hyprland.lua ]] ||
+    die "No ~/.config/hypr/hyprland.lua found. OmaDeck needs Omarchy with Hyprland's Lua config (Hyprland 0.55+)."
+  command -v jq >/dev/null || omarchy pkg add jq
+
+  echo "${BOLD}OmaDeck${RESET} ${DIM}setup${RESET}"
+  echo
+
+  mkdir -p "$(dirname "$CLI_LINK")"
+  ln -sfn "$ROOT/bin/omadeck" "$CLI_LINK"
+  ok "Installed the omadeck command"
+  install_plugin
+
+  # Every fix is on by default; ones the user switched off stay off.
+  for id in $(fix_ids); do
+    echo
+    if is_user_disabled "$id"; then
+      echo "${BOLD}$id${RESET} ${DIM}(switched off; turn it on from the bar or with: omadeck enable $id)${RESET}"
+      continue
+    fi
+    run_fix "$id" fix_install || {
+      warn "$id failed"
+      failed=1
+    }
+  done
+
+  echo
+  ((failed == 0)) || die "OmaDeck setup finished with errors (see above)"
+  ok "OmaDeck is ready. Open it from the gamepad icon in the bar, or run: omadeck list"
+}
+
+cmd_uninstall() {
+  local id
+  echo "${BOLD}OmaDeck${RESET} ${DIM}uninstall${RESET}"
+  for id in $(fix_ids); do
+    echo
+    run_fix "$id" fix_uninstall || warn "$id failed"
+  done
+  echo
+  remove_plugin
+  # Only remove the command if it is ours.
+  if [[ -L $CLI_LINK && $(readlink -f "$CLI_LINK") == "$ROOT/bin/omadeck" ]]; then
+    rm -f "$CLI_LINK"
+  fi
+  rm -rf "$STATE_DIR"
+  ok "OmaDeck removed. Delete $ROOT too if you no longer need it."
+}
+
+usage() {
+  cat <<EOF
+${BOLD}omadeck${RESET}: fixes that make Omarchy great on the Steam Deck.
+
+Usage:
+  omadeck list [--json]      Show every fix and whether it is on
+  omadeck enable <fix>       Turn a fix on
+  omadeck disable <fix>      Turn a fix off (stays off when OmaDeck updates)
+  omadeck setup [--force]    Install the bar plugin and turn on every fix
+  omadeck uninstall          Turn every fix off and remove OmaDeck
+EOF
+}
+
+main() {
+  local cmd=${1:-}
+  shift || true
+  case $cmd in
+    list) cmd_list "$@" ;;
+    enable) cmd_enable "$@" ;;
+    disable) cmd_disable "$@" ;;
+    setup) cmd_setup "$@" ;;
+    uninstall) cmd_uninstall ;;
+    "" | -h | --help | help) usage ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

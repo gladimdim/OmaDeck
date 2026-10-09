@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "gladimdim.omadeck",
+  "name": "OmaDeck",
+  "version": "1.0.0",
+  "author": "Dmytro Gladkyi",
+  "description": "Turn OmaDeck's Steam Deck fixes and tweaks on and off.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaDeck",
+    "description": "Steam Deck fixes and tweaks for Omarchy",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

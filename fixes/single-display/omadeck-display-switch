@@ -1,0 +1,51 @@
+#!/bin/bash
+# OmaDeck single display: use one screen at a time, like Windows' "Show only on 2".
+#
+#   external display connected -> Steam Deck panel off
+#   external display unplugged -> Steam Deck panel back on
+#
+# Started at login by ~/.config/hypr/autostart.lua; it listens to Hyprland's
+# event socket and exits on its own when Hyprland does.
+
+INTERNAL="${OMADECK_INTERNAL_OUTPUT:-eDP-1}"
+SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+
+[[ -n $HYPRLAND_INSTANCE_SIGNATURE && -S $SOCKET ]] || {
+  echo "omadeck-display-switch: not running inside Hyprland" >&2
+  exit 1
+}
+
+# One instance per Hyprland session.
+exec 9>"$XDG_RUNTIME_DIR/omadeck-display-switch.lock"
+flock -n 9 || exit 0
+
+apply() {
+  local monitors external internal
+  monitors=$(hyprctl monitors all -j) || return
+  # Hyprland adds a placeholder FALLBACK output while no real screen is on; it
+  # must not count as an external display or the panel would never come back.
+  external=$(jq --arg i "$INTERNAL" \
+    '[.[] | select(.name != $i and .disabled == false and (.name | test("^(FALLBACK|HEADLESS)") | not))] | length' <<<"$monitors")
+  internal=$(jq -r --arg i "$INTERNAL" \
+    'map(select(.name == $i)) | if length == 0 then "missing" elif .[0].disabled then "off" else "on" end' <<<"$monitors")
+
+  if ((external > 0)) && [[ $internal == on ]]; then
+    hyprctl eval "hl.monitor({ output = \"$INTERNAL\", disabled = true })" >/dev/null
+  elif ((external == 0)) && [[ $internal == off ]]; then
+    # Reloading re-applies the user's own monitor rules, so the panel comes
+    # back with whatever rotation and scale monitors.lua gives it.
+    hyprctl reload >/dev/null
+  fi
+}
+
+apply
+
+# A reload re-enables the panel from the config files, so re-check after one.
+while IFS= read -r event; do
+  case $event in
+    monitoradded'>>'* | monitorremoved'>>'* | configreloaded'>>'*)
+      sleep 0.3
+      apply
+      ;;
+  esac
+done < <(socat -U - "UNIX-CONNECT:$SOCKET" 9>&-)

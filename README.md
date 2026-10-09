@@ -18,15 +18,15 @@ curl -fsSL https://raw.githubusercontent.com/gladimdim/OmaDeck/main/install.sh |
 
 You don't need to log out: fixes take effect right away. Run the same command again any time to update OmaDeck and pick up new fixes. Running it more than once is safe, and fixes you switched off stay off.
 
-## Control panel
+## The OmaDeck window
 
-OmaDeck adds a gamepad icon to your Omarchy bar. Click it to see every tweak, grouped by category, and switch each one on or off. Below the tweaks, **Companion apps** links apps that go well with a Deck, starting with [Omakey](#omakey-your-phone-as-the-decks-keyboard).
+OmaDeck adds a gamepad icon to your Omarchy bar. Click it to open the OmaDeck window, a small floating window of its own, like an app. It lists every tweak, grouped by category, and switch each one on or off. Below the tweaks, **Companion apps** links apps that go well with a Deck, starting with [Omakey](#omakey-your-phone-as-the-decks-keyboard). When an app's Omarchy plugin is already installed, it shows a tick instead of the install links.
 
 <p align="center">
-  <img src="assets/panel.png" alt="The OmaDeck panel in the Omarchy bar: the Single display tweak switched on, and Omakey under Companion apps with Omarchy plugin and Android app buttons" width="404">
+  <img src="assets/window.png" alt="The OmaDeck window: Back buttons scroll and Single display switched on, and Omakey under Companion apps marked Installed" width="520">
 </p>
 
-It follows your Omarchy theme and works from the keyboard: arrow keys move between tweaks, Enter flips one, Esc closes.
+It follows your Omarchy theme and works from the keyboard: arrow keys move between tweaks, Enter flips one, Esc closes the window. Clicking the icon while the window is open brings it to the front. A window rule in `~/.config/hypr/looknfeel.lua` makes it float, centered, at 520×720.
 
 The same controls work from a terminal:
 
@@ -135,10 +135,10 @@ Each tweak is a folder in `fixes/` with a `fix.sh` that the `omadeck` command so
 
 ```bash
 FIX_NAME="My tweak"
-FIX_CATEGORY="Hardware"   # the panel groups tweaks by this
+FIX_CATEGORY="Hardware"   # the window groups tweaks by this
 FIX_DESCRIPTION="One sentence about what it does."
 
-# Exit 0 when the tweak is on. The panel's toggle shows this.
+# Exit 0 when the tweak is on. The window's toggle shows this.
 fix_status() {
   has_lua_block "$HOME/.config/hypr/looknfeel.lua" my-tweak
 }
@@ -154,7 +154,7 @@ fix_uninstall() {
 }
 ```
 
-A new category shows up in the panel as soon as a tweak uses it. Tweaks run in alphabetical order, each in its own subshell with `set -e`. Inside `fix.sh` you can use:
+A new category shows up in the window as soon as a tweak uses it. Tweaks run in alphabetical order, each in its own subshell with `set -e`. Inside `fix.sh` you can use:
 
 - `$FIX_DIR`: the tweak's folder
 - `info`, `ok`, `warn`: output helpers

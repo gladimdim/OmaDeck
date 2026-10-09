@@ -10,6 +10,7 @@ DISABLED_FILE="$STATE_DIR/disabled"
 CLI_LINK="$HOME/.local/bin/omadeck"
 PLUGIN_ID="gladimdim.omadeck"
 PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+LOOKNFEEL="$HOME/.config/hypr/looknfeel.lua"
 
 # ---------------------------------------------------------------------------
 # Output helpers (also available to every fix)
@@ -178,6 +179,10 @@ install_plugin() {
   rm -rf "$PLUGIN_DIR"
   cp -r "$ROOT/plugin" "$PLUGIN_DIR"
 
+  # The OmaDeck window opens floating and centered, like an app's settings.
+  put_lua_block "$LOOKNFEEL" window \
+    'o.window({ class = "^org.quickshell$", title = "^OmaDeck$" }, { float = true, center = true, size = { 520, 720 } })'
+
   if ! command -v omarchy-shell >/dev/null || ! in_hyprland; then
     info "Bar plugin copied; enable it later with: omarchy plugin enable $PLUGIN_ID"
     return
@@ -200,6 +205,7 @@ install_plugin() {
 }
 
 remove_plugin() {
+  remove_lua_block "$LOOKNFEEL" window
   [[ -d $PLUGIN_DIR ]] || return 0
   if command -v omarchy >/dev/null && in_hyprland; then
     omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true

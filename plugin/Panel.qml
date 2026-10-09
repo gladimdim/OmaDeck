@@ -30,6 +30,19 @@ Panel {
     "Appearance": String.fromCodePoint(0xF03D8)
   })
 
+  // Apps that go well with OmaDeck. Not tweaks: each gets links, no toggle.
+  readonly property string companionsIcon: String.fromCodePoint(0xF003B)
+  readonly property var companions: [
+    {
+      name: "Omakey",
+      description: "Your phone as a real keyboard and touchpad for the Deck: Super, Esc, F-keys and chords, over Wi-Fi or Bluetooth.",
+      links: [
+        { label: "Omarchy plugin", icon: String.fromCodePoint(0xF0431), url: "https://github.com/gladimdim/omakey-omarchy-plugin" },
+        { label: "Android app", icon: String.fromCodePoint(0xF0032), url: "https://github.com/gladimdim/omakey-mobile/releases/latest" }
+      ]
+    }
+  ]
+
   property var fixes: []
   property bool loaded: false
   property string loadError: ""
@@ -105,6 +118,11 @@ Panel {
     }
     pendingId = ""
     refresh()
+  }
+
+  function openLink(url) {
+    Quickshell.execDetached(["xdg-open", url])
+    root.close()
   }
 
   function moveCursor(delta) {
@@ -235,6 +253,69 @@ Panel {
                     root.cursorActive = true
                     root.cursorIndex = modelData.flatIndex
                   }
+                }
+              }
+            }
+          }
+        }
+
+        // ---- companion apps ----
+        PanelSeparator { foreground: root.foreground }
+
+        PanelSectionHeader {
+          text: root.companionsIcon + "  COMPANION APPS"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+        }
+
+        Repeater {
+          model: root.companions
+
+          Column {
+            id: companion
+            required property var modelData
+            width: column.width
+            spacing: Style.space(6)
+
+            Text {
+              width: parent.width
+              text: companion.modelData.name
+              textFormat: Text.PlainText
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              text: companion.modelData.description
+              textFormat: Text.PlainText
+              wrapMode: Text.WordWrap
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Row {
+              id: companionLinks
+              width: parent.width
+              spacing: Style.space(6)
+              readonly property real cellWidth: (width - spacing * (companion.modelData.links.length - 1)) / companion.modelData.links.length
+
+              Repeater {
+                model: companion.modelData.links
+
+                Button {
+                  required property var modelData
+                  width: companionLinks.cellWidth
+                  text: modelData.label
+                  iconText: modelData.icon
+                  tooltipText: modelData.url
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  bordered: true
+                  onClicked: root.openLink(modelData.url)
                 }
               }
             }

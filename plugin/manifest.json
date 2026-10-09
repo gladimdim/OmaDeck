@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gladimdim.omadeck",
   "name": "OmaDeck",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Dmytro Gladkyi",
   "description": "Turn OmaDeck's Steam Deck fixes and tweaks on and off.",
   "kinds": [

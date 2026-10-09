@@ -20,10 +20,10 @@ You don't need to log out: fixes take effect right away. Run the same command ag
 
 ## Control panel
 
-OmaDeck adds a gamepad icon to your Omarchy bar. Click it to see every tweak, grouped by category, and switch each one on or off.
+OmaDeck adds a gamepad icon to your Omarchy bar. Click it to see every tweak, grouped by category, and switch each one on or off. Below the tweaks, **Companion apps** links apps that go well with a Deck, starting with [Omakey](#omakey-your-phone-as-the-decks-keyboard).
 
 <p align="center">
-  <img src="assets/panel.png" alt="The OmaDeck panel in the Omarchy bar, showing the Single display tweak switched on" width="420">
+  <img src="assets/panel.png" alt="The OmaDeck panel in the Omarchy bar: the Single display tweak switched on, and Omakey under Companion apps with Omarchy plugin and Android app buttons" width="404">
 </p>
 
 It follows your Omarchy theme and works from the keyboard: arrow keys move between tweaks, Enter flips one, Esc closes.
@@ -52,6 +52,22 @@ Works like Windows' *"Show only on 2"*: you use one screen at a time.
 A small listener (`~/.local/bin/omadeck-display-switch`) watches Hyprland's monitor events. It starts at login from `~/.config/hypr/autostart.lua`. It doesn't hard-code anything about your panel: to turn the Deck screen back on, it reloads your Hyprland config. Gaming Mode is unaffected.
 
 *More fixes coming.*
+
+## Companion apps
+
+### Omakey: your phone as the Deck's keyboard
+
+A docked Deck needs a keyboard, and the on-screen one can't hold `SUPER + SPACE`. [Omakey](https://gladimdim.github.io/omakey-omarchy-plugin/) turns an Android phone into a real keyboard and touchpad: Super, Esc, F1–F12, arrows and any chord, over Wi-Fi or Bluetooth, encrypted. It's a kernel-level device, so Hyprland binds, games and the lock screen all see real key presses. Layouts include laptop QWERTY, Colemak, Dvorak and split boards like the Corne and ErgoDox.
+
+On Omarchy, add the plugin and its service with one command:
+
+```bash
+omarchy plugin add https://github.com/gladimdim/omakey-omarchy-plugin --enable && ~/.config/omarchy/plugins/gladimdim.omakey/install.sh
+```
+
+Then install the [Android app (latest APK)](https://github.com/gladimdim/omakey-mobile/releases/latest) on your phone and pair it from the keyboard icon in the bar. On a stock SteamOS Deck, Omakey has its own [rootless installer](https://github.com/gladimdim/omakey-omarchy-plugin#steam-deck-with-steamos) that works in Game Mode too.
+
+Links: [Omarchy plugin](https://github.com/gladimdim/omakey-omarchy-plugin) · [Android app](https://github.com/gladimdim/omakey-mobile/releases/latest) · [Website](https://gladimdim.github.io/omakey-omarchy-plugin/) · [Omarchy plugin marketplace](https://omarchyplugins.com/plugin.html?id=gladimdim.omakey)
 
 ## Uninstall
 

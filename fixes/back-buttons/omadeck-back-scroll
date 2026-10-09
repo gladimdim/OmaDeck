@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""OmaDeck back buttons: the Deck's four back buttons scroll like a mouse wheel.
+
+    L4, R4 (upper)  scroll up
+    L5, R5 (lower)  scroll down
+
+Holding a button keeps scrolling. Started at login by
+~/.config/hypr/autostart.lua; exits on its own when Hyprland does.
+
+Where the presses come from: in its default "lizard mode" (right trackpad as
+mouse) the hid-steam driver drops every gamepad event, back buttons included,
+so /dev/input has nothing to read. The raw HID reports still reach the hidraw
+node hid-steam keeps for Steam, and that is what this reads. While that node is
+open the driver hides its gamepad, so this steps aside whenever something else
+needs the controller:
+
+  * Steam is running: Steam owns the controller and its own layout applies.
+  * Gamepad mode: holding Options (the ☰ button) for about a second hands the
+    controller back to the driver, which switches to gamepad mode for
+    non-Steam games. The same hold switches back, and scrolling resumes.
+  * hid_steam's lizard_mode parameter is off: another program drives the
+    controller through /dev/input, and opening the node would take it away.
+"""
+
+import fcntl
+import glob
+import os
+import select
+import struct
+import sys
+import time
+
+# Byte and bit of each button in the Deck's 64-byte input report
+# (drivers/hid/hid-steam.c, steam_deck_button_mappings).
+UP_BUTTONS = ((13, 1), (13, 2))  # L4, R4
+DOWN_BUTTONS = ((9, 7), (10, 0))  # L5, R5
+OPTIONS_BUTTON = (9, 6)
+DECK_STATE_REPORT = 0x09
+
+NOTCH = 120  # one wheel notch in REL_WHEEL_HI_RES units
+REPEAT_DELAY = 0.3  # seconds a button is held before it keeps scrolling
+REPEAT_EVERY = 0.02
+REPEAT_STEP = 24  # a fifth of a notch every 20 ms: 10 notches a second
+OPTIONS_HOLD = 0.45  # the driver's own hold time for the gamepad mode switch
+HANDOFF_WAIT = 2.5  # time the driver gets to finish the switch
+CHECK_EVERY = 2.0
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+LIZARD_MODE = "/sys/module/hid_steam/parameters/lizard_mode"
+
+# linux/input-event-codes.h and linux/uinput.h
+EV_SYN, EV_KEY, EV_REL = 0x00, 0x01, 0x02
+SYN_REPORT = 0
+REL_X, REL_Y, REL_WHEEL, REL_WHEEL_HI_RES = 0x00, 0x01, 0x08, 0x0B
+BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
+BUS_VIRTUAL = 0x06
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_RELBIT = 0x40045564, 0x40045565, 0x40045566
+UI_DEV_SETUP, UI_DEV_CREATE, UI_DEV_DESTROY = 0x405C5503, 0x5501, 0x5502
+
+
+class Wheel:
+    """A virtual mouse that only ever sends wheel events."""
+
+    def __init__(self):
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        self.remainder = 0
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_REL)
+        # udev tags a device as a mouse only if it has pointer axes and
+        # buttons, and libinput ignores untagged devices. These are declared
+        # but never sent.
+        for button in (BTN_LEFT, BTN_RIGHT, BTN_MIDDLE):
+            fcntl.ioctl(self.fd, UI_SET_KEYBIT, button)
+        for axis in (REL_X, REL_Y, REL_WHEEL, REL_WHEEL_HI_RES):
+            fcntl.ioctl(self.fd, UI_SET_RELBIT, axis)
+        setup = struct.pack("<HHHH80sI", BUS_VIRTUAL, 0, 0, 1, b"OmaDeck back buttons", 0)
+        fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+
+    def emit(self, type_, code, value):
+        os.write(self.fd, struct.pack("llHHi", 0, 0, type_, code, value))
+
+    def scroll(self, hi_res):
+        """Scroll by hi_res/120 notches; positive is up."""
+        # Apps that read the classic wheel get whole notches as they add up.
+        self.remainder += hi_res
+        notches = int(self.remainder / NOTCH)
+        self.remainder -= notches * NOTCH
+        self.emit(EV_REL, REL_WHEEL_HI_RES, hi_res)
+        if notches:
+            self.emit(EV_REL, REL_WHEEL, notches)
+        self.emit(EV_SYN, SYN_REPORT, 0)
+
+
+def read_text(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def hyprland_alive():
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    return bool(signature) and os.path.isdir(f"{RUNTIME_DIR}/hypr/{signature}")
+
+
+def steam_running():
+    for pid in os.listdir("/proc"):
+        if pid.isdigit() and read_text(f"/proc/{pid}/comm") == "steam":
+            return True
+    return False
+
+
+def client_hidraw():
+    """The hidraw node hid-steam creates for Steam on the controller's USB
+    interface 2. The driver gives the real device no hidraw node of its own."""
+    for device in glob.glob("/sys/bus/hid/devices/0003:28DE:1205.*"):
+        device = os.path.realpath(device)
+        nodes = glob.glob(f"{device}/hidraw/hidraw*")
+        if nodes and read_text(f"{device}/../bInterfaceNumber") == "02":
+            return "/dev/" + os.path.basename(nodes[0])
+    return None
+
+
+def gamepad_mode():
+    """True while the driver is in gamepad mode: only then does its motion
+    sensor device stream events."""
+    for event in glob.glob("/sys/class/input/event*"):
+        if read_text(f"{event}/device/name") != "Steam Deck Motion Sensors":
+            continue
+        try:
+            fd = os.open("/dev/input/" + os.path.basename(event), os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return False
+        try:
+            return bool(select.select([fd], [], [], 0.3)[0])
+        finally:
+            os.close(fd)
+    return False
+
+
+def pressed(report, buttons):
+    return any(report[byte] & (1 << bit) for byte, bit in buttons)
+
+
+def run(node, wheel):
+    """Scroll from the controller's reports until something else needs it.
+    Returns why it stopped."""
+    fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        direction = 0
+        next_step = 0.0
+        options_since = None
+        next_check = time.monotonic() + CHECK_EVERY
+
+        while True:
+            timeout = max(0.0, next_step - time.monotonic()) if direction else CHECK_EVERY
+            if select.select([fd], [], [], timeout)[0]:
+                try:
+                    report = os.read(fd, 64)
+                except BlockingIOError:
+                    report = b""
+                if len(report) == 64 and report[:3] == bytes((1, 0, DECK_STATE_REPORT)):
+                    now = time.monotonic()
+                    wanted = int(pressed(report, UP_BUTTONS)) - int(pressed(report, DOWN_BUTTONS))
+                    if wanted != direction:
+                        direction = wanted
+                        if direction:
+                            wheel.scroll(direction * NOTCH)
+                            next_step = now + REPEAT_DELAY
+
+                    if report[OPTIONS_BUTTON[0]] & (1 << OPTIONS_BUTTON[1]):
+                        options_since = options_since or now
+                        if now - options_since >= OPTIONS_HOLD:
+                            return "options"
+                    else:
+                        options_since = None
+
+            now = time.monotonic()
+            if direction and now >= next_step:
+                wheel.scroll(direction * REPEAT_STEP)
+                next_step = max(next_step + REPEAT_EVERY, now)
+            if now >= next_check:
+                next_check = now + CHECK_EVERY
+                if not hyprland_alive() or steam_running() or read_text(LIZARD_MODE) != "Y":
+                    return "check"
+    finally:
+        os.close(fd)
+
+
+def main():
+    if not hyprland_alive():
+        print("omadeck-back-scroll: not running inside Hyprland", file=sys.stderr)
+        return 1
+
+    # One instance per Hyprland session.
+    lock = open(f"{RUNTIME_DIR}/omadeck-back-scroll.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+
+    last_state = None
+
+    def state(message, wait):
+        nonlocal last_state
+        if message != last_state:
+            print(f"omadeck-back-scroll: {message}", file=sys.stderr, flush=True)
+            last_state = message
+        time.sleep(wait)
+
+    wheel = None
+    while hyprland_alive():
+        lizard = read_text(LIZARD_MODE)
+        if lizard is None:
+            state("no Steam Deck controller (hid_steam isn't loaded)", 10)
+            continue
+        if lizard != "Y":
+            state("hid_steam lizard_mode is off, so another program drives the controller; waiting", 10)
+            continue
+        if steam_running():
+            state("Steam is running and owns the controller; waiting", CHECK_EVERY)
+            continue
+        node = client_hidraw()
+        if not node:
+            state("no Steam Deck controller found; waiting", CHECK_EVERY)
+            continue
+        if gamepad_mode():
+            state("controller is in gamepad mode; waiting", 1)
+            continue
+
+        try:
+            wheel = wheel or Wheel()
+        except OSError as e:
+            state(f"can't create the virtual wheel ({e}); is steam-devices installed?", 10)
+            continue
+
+        state(f"scrolling from {node}", 0)
+        try:
+            why = run(node, wheel)
+        except PermissionError as e:
+            state(f"can't read the controller ({e}); is steam-devices installed?", 10)
+            continue
+        except OSError as e:
+            state(f"lost the controller ({e})", 1)
+            continue
+        if why == "options":
+            # Hand the controller back while Options is still held, so the
+            # driver sees the hold and switches to gamepad mode.
+            state("Options held: handing the controller to gamepad mode", HANDOFF_WAIT)
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)

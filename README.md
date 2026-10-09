@@ -51,6 +51,26 @@ Works like Windows' *"Show only on 2"*: you use one screen at a time.
 
 A small listener (`~/.local/bin/omadeck-display-switch`) watches Hyprland's monitor events. It starts at login from `~/.config/hypr/autostart.lua`. It doesn't hard-code anything about your panel: to turn the Deck screen back on, it reloads your Hyprland config. Gaming Mode is unaffected.
 
+### Input
+
+#### 🎮 Back buttons scroll
+
+The four back buttons work as a mouse wheel, so you can read a long page without reaching for the trackpad.
+
+| Button | Does |
+| --- | --- |
+| L4, R4 (upper) | Scroll up |
+| L5, R5 (lower) | Scroll down |
+
+Tap for one notch, or hold to keep scrolling. A small helper (`~/.local/bin/omadeck-back-scroll`) reads the buttons and scrolls through a virtual mouse called *OmaDeck back buttons*. It starts at login from `~/.config/hypr/autostart.lua`.
+
+It steps aside when something else needs the controller:
+
+- **Steam is open**: Steam takes over the controller, and its own desktop layout applies until you quit Steam.
+- **Gamepad mode for non-Steam games**: hold ☰ (Options) for about a second to switch the Deck into gamepad mode, the same as without OmaDeck. Hold it again to switch back, and the back buttons scroll again.
+
+It needs the kernel's default controller setup, where the right trackpad moves the mouse (`hid_steam` with `lizard_mode` on). If another program has turned that off to drive the controller itself, the helper waits and does nothing.
+
 *More fixes coming.*
 
 ## Companion apps
@@ -92,6 +112,7 @@ install.sh [--uninstall] [--force] [--list]
 - A Steam Deck, LCD or OLED. The installer checks for this and refuses to run on anything else unless you pass `--force`.
 - Omarchy with Hyprland's Lua config (Hyprland 0.55 or newer, `~/.config/hypr/hyprland.lua`).
 - `git`, `socat` and `jq`. Omarchy ships all three, and the installer adds `socat` or `jq` if either is missing.
+- `python3` and `steam-devices` for *Back buttons scroll*. `steam-devices` comes with Steam; if it's missing, the installer adds it, because it gives your user access to the controller.
 
 ## What it changes
 

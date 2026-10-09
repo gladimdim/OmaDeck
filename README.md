@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/omadeck.svg" alt="OmaDeck: a pixel-art Steam Deck showing the Omarchy logo" width="100%">
+</p>
+
 # OmaDeck
 
 **Fixes and tweaks that make [Omarchy](https://omarchy.org/) great on the Steam Deck.**

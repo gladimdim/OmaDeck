@@ -29,6 +29,7 @@ Item {
   readonly property string cli: Quickshell.env("HOME") + "/.local/bin/omadeck"
 
   readonly property string gamepadIcon: String.fromCodePoint(0xF0297)
+  readonly property string closeIcon: String.fromCodePoint(0xF0156)
   readonly property var categoryIcons: ({
     "Hardware": String.fromCodePoint(0xF061A),
     "Display": String.fromCodePoint(0xF0379),
@@ -70,6 +71,13 @@ Item {
 
   property int cursorIndex: 0
   property bool cursorActive: false
+
+  // A summon that is still waiting for cursor warps to be held off.
+  property bool opening: false
+  property int openGen: 0
+  property int pendingGen: 0
+  // The window is created hidden. Only a hide after we have shown it is the user closing it.
+  property bool acceptClose: false
 
   readonly property int enabledCount: fixes.filter(function(f) { return f.enabled }).length
 
@@ -157,23 +165,61 @@ Item {
     cursorIndex = (cursorIndex + delta + fixes.length) % fixes.length
   }
 
-  // Called by the shell on every summon. A second summon brings an open
-  // window to the front and back to the middle of the screen, instead of
-  // opening another one: a floating window left behind by a monitor change
-  // can sit entirely off-screen, and then the icon would seem to do nothing.
+  // Called by the shell on every summon. A second summon raises the window
+  // without focusing it. The first summon shows the window only after
+  // restore-pointer.sh has turned cursor warps off, so the pointer stays
+  // where it was. That script turns warps back on once the window has mapped.
   function open(payloadJson) {
     closingFromHost = false
     if (window.visible) {
-      Quickshell.execDetached(["bash", "-c", "hyprctl dispatch \"$0\" >/dev/null && hyprctl dispatch 'hl.dsp.window.center()' >/dev/null",
-        "hl.dsp.focus({ window = \"title:^" + windowTitle + "$\" })"])
-    } else {
+      Quickshell.execDetached(["bash", "-c",
+        "hyprctl dispatch 'hl.dsp.window.alter_zorder({ window = \"title:^" + windowTitle + "$\", mode = \"top\" })' >/dev/null"])
+    } else if (!opening) {
       cursorActive = false
       actionError = ""
-      window.visible = true
+      opening = true
+      openGen += 1
+      pendingGen = openGen
+      var gen = String(openGen)
+      Quickshell.execDetached(["bash", Quickshell.env("HOME") + "/.config/omarchy/plugins/gladimdim.omadeck/restore-pointer.sh", gen])
+      waitProc.command = ["bash", "-c",
+        "gen=$1; for i in $(seq 1 80); do [ \"$(cat /tmp/omadeck-nowarps-ready 2>/dev/null)\" = \"$gen\" ] && exit 0; sleep 0.02; done; exit 1",
+        "wait", gen]
+      waitProc.running = true
+      showFallback.restart()
     }
     refresh()
     refreshCompanions()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function showPreparedWindow() {
+    var gen = pendingGen
+    opening = false
+    pendingGen = 0
+    acceptClose = true
+    window.visible = true
+    if (gen > 0)
+      Quickshell.execDetached(["bash", "-c", "printf '%s\\n' \"$1\" > /tmp/omadeck-shown", "show", String(gen)])
+  }
+
+  // Blocks until restore-pointer.sh has confirmed cursor:no_warps is on.
+  Process {
+    id: waitProc
+    onExited: function(exitCode) {
+      if (!root.opening || root.pendingGen === 0) return
+      root.showPreparedWindow()
+    }
+  }
+
+  // If the guard script never reports ready, show the window anyway.
+  Timer {
+    id: showFallback
+    interval: 2000
+    repeat: false
+    onTriggered: {
+      if (!root.opening || window.visible) return
+      root.showPreparedWindow()
+    }
   }
 
   // The shell hiding us (`shell hide`, or `toggle` while open). It already
@@ -207,10 +253,14 @@ Item {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.finishAction(text) }
   }
 
-  // Hyprland floats and centers this window at a fixed size through the rule
-  // `omadeck setup` adds to ~/.config/hypr/looknfeel.lua.
+  // Hyprland floats this window through the rule `omadeck setup` adds to
+  // ~/.config/hypr/looknfeel.lua. No size rule, so the edges can resize it.
+  // The close button and Esc both hide the window.
+  // Stay hidden until open() shows us. A FloatingWindow is visible by default,
+  // and it would map (and Hyprland would warp the pointer) before open() runs.
   FloatingWindow {
     id: window
+    visible: false
     title: root.windowTitle
     color: Color.background
     implicitWidth: 520
@@ -218,7 +268,7 @@ Item {
     minimumSize: Qt.size(420, 480)
 
     onVisibleChanged: {
-      if (!visible && !root.closingFromHost) root.requestClose()
+      if (!visible && root.acceptClose && !root.closingFromHost) root.requestClose()
     }
 
     PanelKeyCatcher {
@@ -410,6 +460,93 @@ Item {
           }
         }
       }
+    }
+
+    // Omarchy's small icon button. Sits in the corner, above the resize grips.
+    PanelActionButton {
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.margins: Style.space(8)
+      z: 2
+      iconText: root.closeIcon
+      tooltipText: "Close"
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onClicked: root.requestClose()
+    }
+
+    // Hyprland's border grab is off, so the window grows from these edges.
+    MouseArea {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      width: 6
+      z: 1
+      cursorShape: Qt.SizeHorCursor
+      onPressed: window.startSystemResize(Qt.LeftEdge)
+    }
+    MouseArea {
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      width: 6
+      z: 1
+      cursorShape: Qt.SizeHorCursor
+      onPressed: window.startSystemResize(Qt.RightEdge)
+    }
+    MouseArea {
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      height: 6
+      z: 1
+      cursorShape: Qt.SizeVerCursor
+      onPressed: window.startSystemResize(Qt.TopEdge)
+    }
+    MouseArea {
+      anchors.bottom: parent.bottom
+      anchors.left: parent.left
+      anchors.right: parent.right
+      height: 6
+      z: 1
+      cursorShape: Qt.SizeVerCursor
+      onPressed: window.startSystemResize(Qt.BottomEdge)
+    }
+    MouseArea {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      width: 14
+      height: 14
+      z: 1
+      cursorShape: Qt.SizeFDiagCursor
+      onPressed: window.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
+    }
+    MouseArea {
+      anchors.right: parent.right
+      anchors.top: parent.top
+      width: 14
+      height: 14
+      z: 1
+      cursorShape: Qt.SizeBDiagCursor
+      onPressed: window.startSystemResize(Qt.RightEdge | Qt.TopEdge)
+    }
+    MouseArea {
+      anchors.left: parent.left
+      anchors.bottom: parent.bottom
+      width: 14
+      height: 14
+      z: 1
+      cursorShape: Qt.SizeBDiagCursor
+      onPressed: window.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
+    }
+    MouseArea {
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      width: 14
+      height: 14
+      z: 1
+      cursorShape: Qt.SizeFDiagCursor
+      onPressed: window.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
     }
   }
 }

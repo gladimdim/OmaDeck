@@ -26,7 +26,7 @@ OmaDeck adds a gamepad icon to your Omarchy bar. Click it to open the OmaDeck wi
   <img src="assets/window.png" alt="The OmaDeck window: Back buttons scroll and Single display switched on, and Omakey under Companion apps marked Installed" width="520">
 </p>
 
-It follows your Omarchy theme and works from the keyboard: arrow keys move between tweaks, Enter flips one, Esc closes the window. Clicking the icon while the window is open brings it to the front. A window rule in `~/.config/hypr/looknfeel.lua` makes it float, centered, at 520×720.
+It follows your Omarchy theme. It opens floating at 520×720, and you can drag any edge to resize it. The close button in the corner hides it, and so does Esc. Opening it leaves the pointer where it was. Arrow keys move between tweaks and Enter flips one, once the window is focused. Clicking the icon while the window is open brings it forward without moving the pointer.
 
 The same controls work from a terminal:
 

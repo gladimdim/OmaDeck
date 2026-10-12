@@ -179,9 +179,11 @@ install_plugin() {
   rm -rf "$PLUGIN_DIR"
   cp -r "$ROOT/plugin" "$PLUGIN_DIR"
 
-  # The OmaDeck window opens floating and centered, like an app's settings.
+  # Float only. A size rule is what made the window refuse to resize.
+  # Do not set no_initial_focus here. It does not stop Hyprland warping the
+  # pointer, and the plugin already holds cursor warps off while the window maps.
   put_lua_block "$LOOKNFEEL" window \
-    'o.window({ class = "^org.quickshell$", title = "^OmaDeck$" }, { float = true, center = true, size = { 520, 720 } })'
+    'o.window({ class = "^org.quickshell$", title = "^OmaDeck$" }, { float = true })'
 
   if ! command -v omarchy-shell >/dev/null || ! in_hyprland; then
     info "Bar plugin copied; enable it later with: omarchy plugin enable $PLUGIN_ID"

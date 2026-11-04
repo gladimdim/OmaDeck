@@ -20,6 +20,11 @@ needs the controller:
     non-Steam games. The same hold switches back, and scrolling resumes.
   * hid_steam's lizard_mode parameter is off: another program drives the
     controller through /dev/input, and opening the node would take it away.
+  * A pointer service (deck-input-mapper.service) is running: it drives the
+    controller through /dev/input too, and lizard mode is only on because
+    some other program opened the hidraw node and the driver hid the
+    gamepad. Holding the node here would keep the gamepad hidden, so the
+    service could never get it back and lizard mode would stay on for good.
 """
 
 import fcntl
@@ -27,6 +32,7 @@ import glob
 import os
 import select
 import struct
+import subprocess
 import sys
 import time
 
@@ -46,6 +52,9 @@ HANDOFF_WAIT = 2.5  # time the driver gets to finish the switch
 CHECK_EVERY = 2.0
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+# User services that drive the controller through /dev/input. While one is
+# active, or restarting after it lost the gamepad, this stays off the node.
+POINTER_UNITS = ("deck-input-mapper.service",)
 LIZARD_MODE = "/sys/module/hid_steam/parameters/lizard_mode"
 
 # linux/input-event-codes.h and linux/uinput.h
@@ -108,6 +117,21 @@ def hyprland_alive():
 def steam_running():
     for pid in os.listdir("/proc"):
         if pid.isdigit() and read_text(f"/proc/{pid}/comm") == "steam":
+            return True
+    return False
+
+
+def pointer_service_running():
+    """True while a service from POINTER_UNITS is active or restarting."""
+    for unit in POINTER_UNITS:
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", unit],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.stdout.strip() in ("active", "activating", "reloading"):
             return True
     return False
 
@@ -183,7 +207,8 @@ def run(node, wheel):
                 next_step = max(next_step + REPEAT_EVERY, now)
             if now >= next_check:
                 next_check = now + CHECK_EVERY
-                if not hyprland_alive() or steam_running() or read_text(LIZARD_MODE) != "Y":
+                if (not hyprland_alive() or steam_running()
+                        or read_text(LIZARD_MODE) != "Y" or pointer_service_running()):
                     return "check"
     finally:
         os.close(fd)
@@ -221,6 +246,9 @@ def main():
             continue
         if steam_running():
             state("Steam is running and owns the controller; waiting", CHECK_EVERY)
+            continue
+        if pointer_service_running():
+            state("a pointer service (deck-input-mapper) drives the controller; waiting", CHECK_EVERY)
             continue
         node = client_hidraw()
         if not node:

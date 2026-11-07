@@ -263,9 +263,19 @@ Item {
     visible: false
     title: root.windowTitle
     color: Color.background
-    implicitWidth: 520
-    implicitHeight: 720
-    minimumSize: Qt.size(420, 480)
+
+    // Opens at 520×720 where that fits, and smaller on small screens. The
+    // Deck's own panel is 1280×800 at 1.25 scale, 1024×640 logical, with the
+    // bar along the bottom; a fixed 720 ran off it. The fractions leave room
+    // for Hyprland's gaps and the bar. Before the window maps, `screen` is the
+    // primary one; once Hyprland places it, the size follows that screen.
+    readonly property var fitScreen: screen
+      || (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null)
+    readonly property int fitWidth: fitScreen ? Math.min(520, Math.round(fitScreen.width * 0.9)) : 520
+    readonly property int fitHeight: fitScreen ? Math.min(720, Math.round(fitScreen.height * 0.85)) : 720
+    implicitWidth: fitWidth
+    implicitHeight: fitHeight
+    minimumSize: Qt.size(Math.min(420, fitWidth), Math.min(480, fitHeight))
 
     onVisibleChanged: {
       if (!visible && root.acceptClose && !root.closingFromHost) root.requestClose()
